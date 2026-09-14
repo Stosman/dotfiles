@@ -34,6 +34,15 @@ folder here. Run it on the machine, not inside this repo:
 Edit the `FILES` array when your setup changes, add a line for a
 new config file, drop a line for something you no longer use.
 
+**Unstow before you re-bootstrap.** `install.sh` symlinks `~/scripts`
+to this repo's `scripts/scripts/`. If you run `bootstrap-dotfiles.sh`
+again while that symlink is still in place, its `cp -a "$HOME/scripts"
+...` step copies the symlink's own resolved target back into itself,
+adding another `scripts/scripts/scripts/` layer of duplicates each
+time. Run `stow -D -t "$HOME" scripts` (or unstow everything the same way)
+before re-bootstrapping, and check `scripts/scripts/` for a stray
+nested `scripts/` folder afterward if you forget.
+
 ## Packages included
 
 | Package    | Contents |
