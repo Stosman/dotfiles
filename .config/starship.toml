@@ -40,5 +40,5 @@ style = "bg:#6836D6 fg:#ffffff"
 format = "([$all_status$ahead_behind ]($style))"
 
 [character]
-success_symbol = "[\uE0B0](fg:#6836D6 bg:#16C60C)[ \\$ ](bg:#16C60C fg:#ffffff bold)[\uE0B0](fg:#16C60C)"
-error_symbol = "[\uE0B0](fg:#6836D6 bg:#E74856)[ \\$ ](bg:#E74856 fg:#ffffff bold)[\uE0B0](fg:#E74856)"
+success_symbol = "[ \\$ ](bg:#16C60C fg:#ffffff bold)[\uE0B0](fg:#16C60C)"
+error_symbol = "[ \\$ ](bg:#E74856 fg:#ffffff bold)[\uE0B0](fg:#E74856)"
