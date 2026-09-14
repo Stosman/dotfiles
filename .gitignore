@@ -1,0 +1,22 @@
+# Safety net only. bootstrap-dotfiles.sh should never copy these in
+# the first place, but this catches anything added by hand later.
+
+.ssh/
+*.pem
+id_rsa*
+known_hosts
+
+.docker/config.json
+.docker/.token_seed*
+
+.npm/
+.cache/
+.local/
+node_modules/
+
+*.log
+*_history
+*history*
+.zcompdump*
+.wget-hsts
+.lesshst
