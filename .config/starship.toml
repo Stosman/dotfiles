@@ -7,6 +7,8 @@ $hostname\
 [ \U0001F986 ](bg:#E8871E fg:#ffffff)\
 [\uE0B0](fg:#E8871E bg:#B4009E)\
 $directory\
+$git_branch\
+$git_status\
 $character"""
 
 [username]
@@ -28,6 +30,15 @@ format = '[ $path ]($style)'
 truncation_length = 3
 truncation_symbol = "\u2026/"
 
+[git_branch]
+symbol = "\uE0A0 "
+style = "bg:#6836D6 fg:#ffffff"
+format = '[\uE0B0](fg:#B4009E bg:#6836D6)[ $symbol$branch ]($style)'
+
+[git_status]
+style = "bg:#6836D6 fg:#ffffff"
+format = '[$all_status$ahead_behind ]($style)[\uE0B0](fg:#6836D6)'
+
 [character]
-success_symbol = "[\uE0B0](fg:#B4009E bg:#16C60C)[ \\$ ](bg:#16C60C fg:#ffffff bold)[\uE0B0](fg:#16C60C)"
-error_symbol = "[\uE0B0](fg:#B4009E bg:#E74856)[ \\$ ](bg:#E74856 fg:#ffffff bold)[\uE0B0](fg:#E74856)"
+success_symbol = "[\uE0B0](fg:#6836D6 bg:#16C60C)[ \\$ ](bg:#16C60C fg:#ffffff bold)[\uE0B0](fg:#16C60C)"
+error_symbol = "[\uE0B0](fg:#6836D6 bg:#E74856)[ \\$ ](bg:#E74856 fg:#ffffff bold)[\uE0B0](fg:#E74856)"
