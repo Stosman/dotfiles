@@ -8,7 +8,7 @@ files into place; `stow -D -t $HOME <package>` removes the links.
 
 ```
 sudo apt install stow          # Debian, if not already there
-git clone <your-repo-url> ~/dotfiles
+git clone https://github.com/Stosman/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 ./install.sh                   # links everything
 # or: ./install.sh zsh btop    # just those packages
