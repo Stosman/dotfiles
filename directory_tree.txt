@@ -1,0 +1,15 @@
+.
+├── ./directory_tree.txt
+├── ./duck.sh
+├── ./motd1
+├── ./motd_art
+├── ./scripts
+│   ├── ./scripts/convertduckpngs.sh
+│   ├── ./scripts/copytobookdrop.sh
+│   ├── ./scripts/findmobionly.sh
+│   ├── ./scripts/stosduck-128.png
+│   └── ./scripts/stos-motd.sh
+├── ./solidfy.py
+└── ./stos-duck.ansi.bak
+
+2 directories, 11 files

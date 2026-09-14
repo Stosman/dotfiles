@@ -1,0 +1,427 @@
+#!/bin/bash
+#
+# stos-motd.sh
+# Message of the day for stos.top
+#
+# Install as a login banner one of two ways:
+#
+#   1) Drop into update-motd.d (Debian/OMV style, runs on every SSH login)
+#      sudo mkdir -p /etc/stos
+#      sudo cp stos-duck.ansi /etc/stos/stos-duck.ansi
+#      sudo cp stos-motd.sh /etc/update-motd.d/99-stos
+#      sudo chmod +x /etc/update-motd.d/99-stos
+#      sudo chmod -x /etc/update-motd.d/10-uname  (optional, kills the default banner)
+#
+#   2) Or source it from ~/.bashrc
+#      echo "bash /etc/stos/stos-motd.sh" >> ~/.bashrc
+#
+# Run with STOS_DEBUG=1 for loader detail and a total runtime figure.
+
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+CYAN=$'\033[0;36m'
+BLUE=$'\033[1;34m'
+MAGENTA=$'\033[0;35m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+NC=$'\033[0m'
+
+# multi-byte block characters need a UTF-8 aware shell for correct widths
+export LC_ALL=C.UTF-8
+
+START_TS=$SECONDS
+
+# ---------------------------------------------------------------------------
+# layout config
+# ---------------------------------------------------------------------------
+LOGO_GUTTER=4          # blank columns between the duck and the wordmark
+STATS_LEFT_WIDTH=42    # width of the left stats column lower down
+TRIM_BLANK_ROWS=1      # drop all-space rows from the top and bottom of the art
+WORDMARK_TOP=1         # blank rows above the wordmark, tunes the vertical start
+
+# where to look for the duck, first hit wins
+LOGO_CANDIDATES=(
+  "${STOS_LOGO:-}"
+  "/etc/stos/stos-duck.ansi"
+  "$(dirname "${BASH_SOURCE[0]}")/stos-duck.ansi"
+  "$HOME/stos-duck.ansi"
+)
+
+# containers to surface by name in the right hand column
+CORE_SERVICES=(jellyfin clipcascade audiobookshelf grimmory komga nginx-proxy-manager cloudflare-ddns)
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+# Printable width of a coloured string, answer left in $VLEN.
+#
+# The obvious approach, ${s//$esc\[+([0-9;])m/}, is quadratic with heavy
+# backtracking and costs over a second on a row of per-character truecolour
+# art. This walks the string once instead, and writes to a global so callers
+# avoid a subshell fork. Roughly four hundred times faster on art rows.
+VLEN=0
+visible_len() {
+  local rest="$1" esc=$'\033' n=0 head
+  while [[ "$rest" == *"$esc"* ]]; do
+    head="${rest%%"$esc"*}"
+    n=$(( n + ${#head} ))
+    rest="${rest#*"$esc"}"
+    rest="${rest#*m}"
+  done
+  VLEN=$(( n + ${#rest} ))
+}
+
+# true when a line holds nothing printable beyond spaces
+is_blank_row() {
+  local rest="$1" esc=$'\033' head=""
+  local acc=""
+  while [[ "$rest" == *"$esc"* ]]; do
+    head="${rest%%"$esc"*}"
+    acc+="$head"
+    rest="${rest#*"$esc"}"
+    rest="${rest#*m}"
+  done
+  acc+="$rest"
+  [[ -z "${acc//[[:space:]]/}" ]]
+}
+
+# one row of a two-column layout. $3 is the left column width, $4 an already
+# known printable width for $1, saving a rescan of long art rows.
+print_row() {
+  local l="$1" r="$2" width="${3:-$STATS_LEFT_WIDTH}" known="${4:-}"
+  local pad
+  if [ -z "$r" ]; then
+    printf '%s\n' "$l"
+    return
+  fi
+  if [ -n "$known" ]; then
+    VLEN="$known"
+  else
+    visible_len "$l"
+  fi
+  pad=$(( width - VLEN ))
+  [ $pad -lt 1 ] && pad=1
+  printf '%s%*s%s\n' "$l" "$pad" "" "$r"
+}
+
+# ---------------------------------------------------------------------------
+# load the duck
+# ---------------------------------------------------------------------------
+LOGO=()
+LOGO_W=()
+RAW=()
+LOGO_FILE=""
+for CAND in "${LOGO_CANDIDATES[@]}"; do
+  [ -n "$CAND" ] && [ -f "$CAND" ] && { LOGO_FILE="$CAND"; break; }
+done
+
+if [ -n "$LOGO_FILE" ]; then
+  mapfile -t RAW < "$LOGO_FILE"
+  # tolerate CRLF, a stray CR would reset the cursor to column zero
+  for (( i=0; i<${#RAW[@]}; i++ )); do RAW[i]="${RAW[i]%$'\r'}"; done
+  if [ "$TRIM_BLANK_ROWS" -eq 1 ]; then
+    START=0
+    END=$(( ${#RAW[@]} - 1 ))
+    while [ $START -le $END ] && is_blank_row "${RAW[START]}"; do START=$((START+1)); done
+    while [ $END -ge $START ] && is_blank_row "${RAW[END]}"; do END=$((END-1)); done
+    if [ $START -gt $END ]; then
+      LOGO=("${RAW[@]}")
+    else
+      for (( i=START; i<=END; i++ )); do LOGO+=("${RAW[i]}"); done
+    fi
+  else
+    LOGO=("${RAW[@]}")
+  fi
+else
+  printf '%s\n' "${RED}${BOLD}stos-motd: no artwork found, searched:${NC}" >&2
+  for CAND in "${LOGO_CANDIDATES[@]}"; do
+    [ -n "$CAND" ] && printf '  %s\n' "$CAND" >&2
+  done
+fi
+
+# measure every row once, cache the result for the printing pass
+LOGO_WIDTH=0
+for (( i=0; i<${#LOGO[@]}; i++ )); do
+  visible_len "${LOGO[i]}"
+  LOGO_W[i]=$VLEN
+  [ "$VLEN" -gt "$LOGO_WIDTH" ] && LOGO_WIDTH=$VLEN
+done
+HEADER_COL=$(( LOGO_WIDTH + LOGO_GUTTER ))
+# one grid for the whole banner, so the header and the stats share a spine
+GRID=$HEADER_COL
+[ "$STATS_LEFT_WIDTH" -gt "$GRID" ] && GRID=$STATS_LEFT_WIDTH
+
+if [ -n "${STOS_DEBUG:-}" ]; then
+  printf '%s\n' "--- stos-motd debug ---"
+  printf 'shell        : %s (bash %s)\n' "$0" "${BASH_VERSION:-none}"
+  printf 'matched file : %s\n' "${LOGO_FILE:-NONE}"
+  for CAND in "${LOGO_CANDIDATES[@]}"; do
+    [ -z "$CAND" ] && continue
+    if [ -f "$CAND" ]; then printf '  exists   %s\n' "$CAND"
+    else printf '  missing  %s\n' "$CAND"
+    fi
+  done
+  printf 'rows read    : %d\n' "${#RAW[@]}"
+  printf 'rows kept    : %d\n' "${#LOGO[@]}"
+  printf 'logo width   : %d\n' "$LOGO_WIDTH"
+  printf 'header col   : %d\n' "$HEADER_COL"
+  printf 'load elapsed : %ds\n' "$(( SECONDS - START_TS ))"
+  printf '%s\n' "--- end debug ---"
+fi
+
+# ---------------------------------------------------------------------------
+# wordmark, small block text sitting to the right of the duck
+# ---------------------------------------------------------------------------
+WORDMARK=(
+' ___ _____ ___  ___    _____ ___  ___ '
+'/ __|_   _/ _ \/ __|  |_   _/ _ \| _ \'
+'\__ \ | || (_) \__ \ _  | || (_) |  _/'
+'|___/ |_| \___/|___/(_) |_| \___/|_|  '
+)
+
+# vertical yellow-to-orange gradient, picked to match the duck
+WM=()
+WROWS=${#WORDMARK[@]}
+for (( r=0; r<WROWS; r++ )); do
+  if [ "$WROWS" -gt 1 ]; then
+    CR=$(( 232 + (250-232) * r / (WROWS-1) ))
+    CG=$(( 241 + (130-241) * r / (WROWS-1) ))
+    CB=$((   0 + ( 14-  0) * r / (WROWS-1) ))
+  else
+    CR=232; CG=241; CB=0
+  fi
+  WM+=("$(printf '\033[1m\033[38;2;%d;%d;%dm%s\033[0m' "$CR" "$CG" "$CB" "${WORDMARK[r]}")")
+done
+
+HEAD_HOST=$(hostname)
+HEAD_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+
+RIGHT_HEAD=(
+  "${WM[@]}"
+  ""
+  "  ${MAGENTA}${BOLD}DATA IS FOR DUCKS${NC}"
+  "  ${DIM}self hosted, self inflicted${NC}"
+  ""
+  "  ${YELLOW}${BOLD}stos.top${NC}   ${DIM}${HEAD_HOST} @ ${HEAD_IP}${NC}"
+)
+
+# ---- gather live stats ----
+HOST="$HEAD_HOST"
+IP="$HEAD_IP"
+KERNEL=$(uname -r)
+UP=$(uptime -p 2>/dev/null | sed 's/up //')
+LOAD=$(uptime | awk -F'load average:' '{print $2}' | sed 's/^ //')
+MEM=$(free -h 2>/dev/null | awk '/^Mem:/ {print $3 " / " $2}')
+
+# CPU usage, sampled over a short window from /proc/stat
+read -r _ u1 n1 s1 i1 w1 irq1 sirq1 st1 _ _ < /proc/stat
+sleep 0.3
+read -r _ u2 n2 s2 i2 w2 irq2 sirq2 st2 _ _ < /proc/stat
+TOTAL1=$((u1+n1+s1+i1+w1+irq1+sirq1+st1))
+TOTAL2=$((u2+n2+s2+i2+w2+irq2+sirq2+st2))
+IDLE1=$((i1+w1))
+IDLE2=$((i2+w2))
+DTOTAL=$((TOTAL2-TOTAL1))
+DIDLE=$((IDLE2-IDLE1))
+if [ "$DTOTAL" -gt 0 ]; then
+  CPU_PCT=$(( 100*(DTOTAL-DIDLE)/DTOTAL ))
+else
+  CPU_PCT="n/a"
+fi
+
+# one docker call for the whole picture, rather than two plus two per service
+declare -A CSTATUS
+declare -A CSTATE
+DOCKER_ALL=0
+DOCKER_UP=0
+DOCKER_DOWN=0
+if command -v docker >/dev/null 2>&1; then
+  while IFS='|' read -r CN CS CST; do
+    [ -z "$CN" ] && continue
+    CSTATUS["$CN"]="$CS"
+    CSTATE["$CN"]="$CST"
+    DOCKER_ALL=$(( DOCKER_ALL + 1 ))
+    [ "$CST" = "running" ] && DOCKER_UP=$(( DOCKER_UP + 1 ))
+  done < <(docker ps -a --format '{{.Names}}|{{.Status}}|{{.State}}' 2>/dev/null)
+  DOCKER_DOWN=$(( DOCKER_ALL - DOCKER_UP ))
+fi
+
+UPDATES=0
+if command -v apt >/dev/null 2>&1; then
+  UPDATES=$(apt list --upgradable 2>/dev/null | tail -n +2 | wc -l)
+fi
+
+DATESTR=$(date '+%A %d %B %Y, %H:%M')
+
+SYSTEM_LINE=$(df -h / 2>/dev/null | awk -v y="$YELLOW" -v b="$BOLD" -v n="$NC" 'NR==2 {print "  "y b"System"n"   "$3" / "$2"  ("$5" used)"}')
+
+POOL_NAME=""
+if command -v zpool >/dev/null 2>&1; then
+  POOL_NAME=$(zpool list -H -o name 2>/dev/null | head -n1)
+fi
+
+# ---- build the left column: host stats + disk usage ----
+HOSTBLOCK=()
+HOSTBLOCK+=("  ${YELLOW}${BOLD}Host${NC}       ${HOST}  (${IP})")
+HOSTBLOCK+=("  ${YELLOW}${BOLD}Kernel${NC}     ${KERNEL}")
+HOSTBLOCK+=("  ${YELLOW}${BOLD}Uptime${NC}     ${UP}")
+HOSTBLOCK+=("  ${YELLOW}${BOLD}CPU${NC}        ${CPU_PCT}%  (load ${LOAD})")
+HOSTBLOCK+=("  ${YELLOW}${BOLD}Memory${NC}     ${MEM}")
+
+if command -v apt >/dev/null 2>&1; then
+  if [ "$UPDATES" -gt 0 ]; then
+    HOSTBLOCK+=("  ${YELLOW}${BOLD}Updates${NC}    ${RED}${UPDATES} pending${NC}")
+  else
+    HOSTBLOCK+=("  ${YELLOW}${BOLD}Updates${NC}    ${GREEN}up to date${NC}")
+  fi
+fi
+
+if [ -f /var/run/reboot-required ]; then
+  HOSTBLOCK+=("  ${RED}${BOLD}Reboot${NC}     required")
+fi
+
+# left column below the duck carries the disk picture on its own
+LEFT=()
+LEFT+=("${MAGENTA}${BOLD}Disk usage${NC}")
+[ -n "$SYSTEM_LINE" ] && LEFT+=("$SYSTEM_LINE")
+LEFT+=("")
+
+if [ -n "$POOL_NAME" ]; then
+  read -r PUSED_B PAVAIL_B <<< "$(zfs list -H -p -o used,avail "$POOL_NAME" 2>/dev/null)"
+  PTOTAL_B=$((PUSED_B + PAVAIL_B))
+  if [ "$PTOTAL_B" -gt 0 ]; then
+    PCAP=$(( PUSED_B * 100 / PTOTAL_B ))
+  else
+    PCAP=0
+  fi
+  if command -v numfmt >/dev/null 2>&1; then
+    PUSED_H=$(numfmt --to=iec --format="%.1f" "$PUSED_B" 2>/dev/null)
+    PTOTAL_H=$(numfmt --to=iec --format="%.1f" "$PTOTAL_B" 2>/dev/null)
+  else
+    PUSED_H="$PUSED_B"
+    PTOTAL_H="$PTOTAL_B"
+  fi
+  LEFT+=("  ${YELLOW}${BOLD}${POOL_NAME}${NC}    ${PUSED_H} / ${PTOTAL_H}  (${PCAP}% used)")
+  while read -r DNAME DUSED; do
+    LABEL=$(basename "$DNAME")
+    LEFT+=("$(printf '    %-11s %s' "$LABEL" "$DUSED")")
+  done < <(zfs list -H -o name,used -r "$POOL_NAME" 2>/dev/null | tail -n +2)
+else
+  # fallback for non-ZFS systems, real mounts grouped under one pool header
+  LEFT+=("  ${YELLOW}${BOLD}Pool${NC}")
+  while read -r FS SIZE USED AVAIL PCT MOUNT; do
+    [ "$MOUNT" = "/" ] && continue
+    LABEL=$(basename "$MOUNT")
+    LEFT+=("$(printf '    %-11s %s' "$LABEL" "$USED")")
+  done < <(df -h -x tmpfs -x devtmpfs -x overlay -x squashfs -x proc -x sysfs -x cgroup -x efivarfs -x vfat 2>/dev/null | tail -n +2)
+fi
+
+# ---- build the right column: containers + core services ----
+RIGHT=()
+if [ "$DOCKER_ALL" -gt 0 ]; then
+  if [ "$DOCKER_DOWN" -gt 0 ]; then
+    RIGHT+=("  ${GREEN}${BOLD}Containers${NC}  ${GREEN}${DOCKER_UP} up${NC}, ${RED}${DOCKER_DOWN} down${NC} (of ${DOCKER_ALL})")
+  else
+    RIGHT+=("  ${GREEN}${BOLD}Containers${NC}  ${GREEN}${DOCKER_UP} up${NC} (of ${DOCKER_ALL})")
+  fi
+  RIGHT+=("  ${MAGENTA}${BOLD}Core services${NC}")
+
+  # resolve names first, so the status column lines up under one another
+  MATCHED=()
+  NAME_W=0
+  for SVC in "${CORE_SERVICES[@]}"; do
+    NAME=""
+    if [ -n "${CSTATUS[$SVC]:-}" ]; then
+      NAME="$SVC"
+    else
+      # fall back to a substring match, mirroring docker ps --filter name=
+      for KEY in "${!CSTATUS[@]}"; do
+        case "$KEY" in
+          *"$SVC"*) NAME="$KEY"; break ;;
+        esac
+      done
+    fi
+    [ -z "$NAME" ] && continue
+    MATCHED+=("$NAME")
+    [ ${#NAME} -gt $NAME_W ] && NAME_W=${#NAME}
+  done
+
+  for NAME in "${MATCHED[@]}"; do
+    PADDED=$(printf '%-*s' "$NAME_W" "$NAME")
+    if [ "${CSTATE[$NAME]}" = "running" ]; then
+      RIGHT+=("    ${GREEN}●${NC} ${PADDED}  ${DIM}${CSTATUS[$NAME]}${NC}")
+    else
+      RIGHT+=("    ${RED}●${NC} ${PADDED}  ${DIM}${CSTATUS[$NAME]}${NC}")
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
+# assemble the two columns
+#   left  : the duck, then the disk picture underneath
+#   right : wordmark, branding, host stats, containers, services, one stack
+# ---------------------------------------------------------------------------
+COL_L=()
+for (( i=0; i<${#LOGO[@]}; i++ )); do COL_L+=("${LOGO[i]}"); done
+COL_L+=("")
+COL_L+=("${LEFT[@]}")
+
+COL_R=()
+for (( i=0; i<WORDMARK_TOP; i++ )); do COL_R+=(""); done
+COL_R+=("${WM[@]}")
+COL_R+=("")
+COL_R+=("  ${MAGENTA}${BOLD}DATA IS FOR DUCKS${NC}")
+COL_R+=("  ${DIM}self hosted, self inflicted${NC}")
+COL_R+=("")
+COL_R+=("  ${YELLOW}${BOLD}stos.top${NC}   ${DIM}${HEAD_HOST} @ ${HEAD_IP}${NC}")
+COL_R+=("")
+COL_R+=("${HOSTBLOCK[@]}")
+if [ ${#RIGHT[@]} -gt 0 ]; then
+  COL_R+=("")
+  COL_R+=("${RIGHT[@]}")
+fi
+
+# ---- print, art rows reuse their cached width ----
+echo ""
+ROWS=${#COL_L[@]}
+[ ${#COL_R[@]} -gt $ROWS ] && ROWS=${#COL_R[@]}
+for (( i=0; i<ROWS; i++ )); do
+  if [ $i -lt ${#LOGO[@]} ]; then
+    print_row "${COL_L[i]:-}" "${COL_R[i]:-}" "$GRID" "${LOGO_W[i]:-0}"
+  else
+    print_row "${COL_L[i]:-}" "${COL_R[i]:-}" "$GRID"
+  fi
+done
+
+echo ""
+
+QUOTES=(
+  "No backup, no sympathy."
+  "Not a homelab until something breaks at 2am."
+  "Docker restart: policy unless-stopped, hope: policy always."
+  "There are two types of NAS owners, those who've lost data and those who will."
+  "Your containers are up. Your standards remain low."
+  "RAID is not a backup and this message will repeat until you set one up."
+  "Tailscale connected. Family still asking why Netflix isn't free here."
+  "systemctl status motivation: failed"
+  "This server has seen things your browser history hasn't."
+  "99 percent uptime, 1 percent me forgetting why I opened the terminal."
+  "Half of self-hosting is fixing what worked yesterday."
+  "Your NAS remembers everything you meant to delete."
+  "Latency is the universe asking you to wait."
+  "Every reboot is a small act of faith."
+  "The cloud is someone else's problem, this is yours."
+  "Grafana dashboards, proof you have graphs and no answers."
+  "Your uptime graph looks better than your sleep schedule."
+  "Nothing says stability like three unlabeled cron jobs."
+  "Someone else's server never smells like burning fan bearings."
+  "A watched docker pull never finishes."
+  "The duck knows what you downloaded."
+)
+PICK=${QUOTES[$RANDOM % ${#QUOTES[@]}]}
+echo -e "${BLUE}${PICK}${NC}"
+echo -e "${DIM}${DATESTR}${NC}"
+[ -n "${STOS_DEBUG:-}" ] && printf '%stotal runtime: %ds%s\n' "$DIM" "$(( SECONDS - START_TS ))" "$NC"
+echo ""

@@ -1,0 +1,33 @@
+"$schema" = 'https://starship.rs/config-schema.json'
+
+format = """
+$username\
+[\uE0B0](fg:#F4C430 bg:#E8871E)\
+$hostname\
+[ \U0001F986 ](bg:#E8871E fg:#ffffff)\
+[\uE0B0](fg:#E8871E bg:#B4009E)\
+$directory\
+$character"""
+
+[username]
+show_always = true
+style_user = "bg:#F4C430 fg:#2b2b2b"
+style_root = "bg:#D32F2F fg:#ffffff"
+format = '[ $user ]($style)'
+disabled = false
+
+[hostname]
+ssh_only = false
+trim_at = "."
+style = "bg:#E8871E fg:#ffffff"
+format = '[$hostname]($style)'
+
+[directory]
+style = "bg:#B4009E fg:#ffffff"
+format = '[ $path ]($style)'
+truncation_length = 3
+truncation_symbol = "\u2026/"
+
+[character]
+success_symbol = "[\uE0B0](fg:#B4009E bg:#16C60C)[ \\$ ](bg:#16C60C fg:#ffffff bold)[\uE0B0](fg:#16C60C)"
+error_symbol = "[\uE0B0](fg:#B4009E bg:#E74856)[ \\$ ](bg:#E74856 fg:#ffffff bold)[\uE0B0](fg:#E74856)"
